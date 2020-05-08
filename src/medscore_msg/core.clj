@@ -221,7 +221,7 @@
                                    (= (:dev (second x)) :-) :to-decrease
                                    )
                            :mod (cond
-                                  (= (:score (second x)) 2) :lightly
+                                  (= (:score (second x)) 4) :lightly
                                   (= (:score (second x)) 2) :greatly
                                   (= (:score (second x)) 1) :much
                                   )
@@ -316,6 +316,7 @@
       (def clause (. nlgFactory createClause))
       (. clause setVerb (lexicalize (:verb cat-sentence-plan) rand lang))
 
+      (def verb (. clause getVerbPhrase))
 
       (def subj (. nlgFactory createNounPhrase (lexicalize :you rand lang)))
       (. clause setSubject subj)
@@ -340,7 +341,7 @@
       (. cobj addPostModifier
          cobj-post-modifier )
 
-      (if (:mod cat-sentence-plan) (. cobj addPreModifier (lexicalize (:mod cat-sentence-plan) rand lang)))
+      (if (:mod cat-sentence-plan) (. verb addModifier (lexicalize (:mod cat-sentence-plan) rand lang)))
       (. clause setObject cobj)
 
       (if (or (= (:verb cat-sentence-plan) :to-increase)
@@ -408,18 +409,35 @@
 
 (defn cat-quasi-trees-generator [cat-sentence-plans rand lang]
   (let [cat-quasi-trees (map cat-quasi-tree-generator cat-sentence-plans (repeat (count  cat-sentence-plans) rand) (repeat (count  cat-sentence-plans) lang) )
-        sen (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+        sen-5 (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
                                                            ))
                                          (filter (fn [x]
                                                    (and (= (:score x) 5)
                                                         (= (:dev x) :+)))
+                                                 cat-quasi-trees) )) lang)
+        sen-4 (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                           ))
+                                         (filter (fn [x]
+                                                   (and (= (:score x) 4)
+                                                        (= (:dev x) :+)))
                                                  cat-quasi-trees) )) lang)]
     ;;aggregate qt for score 5
-    sen
+    {:5 sen-5
+     :4 sen-4
+     :3 nil
+     :2 nil
+     :1 nil
+     :0 nil
+     }
     )
 
   )
 
+(defn realise-sentence
+  [categ-qt]
+  (let [sent (. realiser realiseSentence categ-qt)]
+    sent)
+  )
 
 (defn createFeedbackMedMessages
   "This is the function called by the server in order to return the text
@@ -446,12 +464,20 @@
                    (= ita-eng 1) :eng)
         ]
 
+
+    (def cat-quasi-tree (cat-quasi-trees-generator (cat-sentence-planner (cat-text-planner cat-dict)) rand lang))
     (str (. realiser realiseSentence (ms-quasi-tree-generator (ms-sentence-planner (ms-text-planner mscore)) rand lang))
          " "
-         (. realiser realiseSentence (cat-quasi-trees-generator (cat-sentence-planner (cat-text-planner cat-dict)) rand lang)))
+         (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 0))
+         (if (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 1))
+           (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 1)))
+
+         )
 
     )
   )
+
+
 
 (defn -main
   "I don't do a whole lot ... yet."
