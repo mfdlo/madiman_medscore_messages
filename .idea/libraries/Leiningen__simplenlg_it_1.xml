@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="Leiningen: simplenlg-it:1">
+    <CLASSES>
+      <root url="jar://$MAVEN_REPOSITORY$/simplenlg-it/simplenlg-it/1/simplenlg-it-1.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
