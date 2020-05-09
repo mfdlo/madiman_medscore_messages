@@ -15,7 +15,7 @@
 
 (deftest catTest
   (testing "cat sentences"
-    (let [sent (createFeedbackMedMessages 5 5 5 4 4 4 4 4 4  49 0 1)]
+    (let [sent (createFeedbackMedMessages 4 2 4 5 2 3 5 5 1 41 0 0)]
       (println (str sent))))
   )
 

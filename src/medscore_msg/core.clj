@@ -63,6 +63,7 @@
          :poor ["povero" "misero" "scarso"]
          :okay ["bene" "correttamente" "giustamente"]
          :lightly ["leggermente" "lievemente" "appena"]
+         :greatly ["molto"]
          :car ["carboidrati"]
          :lip ["lipidi"]
          :pro ["proteine"]
@@ -86,7 +87,8 @@
          :you ["tu"]
          :must ["dovere"]
          :right ["giusto","corretto"]
-
+         :more ["più"]
+         :less ["meno"]
          }
         english-standard-dictionary
         {
@@ -105,6 +107,7 @@
          :poor ["poor" ]
          :okay ["well" ]
          :lightly ["lightly"]
+         :greatly ["greatly"]
          :car ["Carbohydrates"]
          :lip ["Lipids"]
          :pro ["Proteins"]
@@ -128,6 +131,8 @@
          :you ["you"]
          :must ["must"]
          :right ["right"]
+         :more ["more"]
+         :less ["less"]
 
 
          }]
@@ -167,8 +172,8 @@
   [cat-dict]
   (cond (and (some #{:5} cat-dict)
              (some #{:4} cat-dict)
-             (some #{:3} cat-dict)) {:ord :desc :cat-ordered (sort-by :score cat-dict)}
-        :else {:ord :sandw :cat-ordered (sort-by :score cat-dict)}
+             (some #{:3} cat-dict)) :desc
+        :else :sandw
         )
   )
 
@@ -210,7 +215,7 @@
 
    use the :cat name to build the pp"
 
-  [cat-text-plan]
+  [cat-dict]
   (vec
     (map (fn [x] (hash-map :type :declarative
                            :verb (cond
@@ -223,7 +228,10 @@
                            :mod (cond
                                   (= (:score (second x)) 4) :lightly
                                   (= (:score (second x)) 2) :greatly
-                                  (= (:score (second x)) 1) :much
+                                  (and (= (:score (second x)) 1)
+                                       (= (:dev (second x)) :+)) :more
+                                  (and (= (:score (second x)) 1)
+                                       (= (:dev (second x)) :-)) :less
                                   )
                            :prep-of (:cat (second x))
                            :score (:score (second x))
@@ -231,7 +239,7 @@
 
                            )
            )
-         (:cat-ordered cat-text-plan))
+         cat-dict)
     )
   )
 
@@ -306,8 +314,6 @@
   "Build the quasi-tree for a single category sentence plan
   Every sentence-plan contains
   :verb (:mod)  :prep-of
-
-
   Generate the sentences (You) :verb (:mod) the number of portions :prep-of "
   [cat-sentence-plan rand lang]
   (let [nlgFactory (nlgFactory-lang lang)]
@@ -323,7 +329,7 @@
       (def cobj (. nlgFactory createNounPhrase
                    (determiner :def lang) (lexicalize :number rand lang)))
       (if (or (= (:score cat-sentence-plan) 5)
-              (= (:score cat-sentence-plan) 1))
+              (= (:score cat-sentence-plan) 0))
         (. cobj addPreModifier (. nlgFactory createAdjectivePhrase
                                   ;;createNounPhrase
                                   (lexicalize :right rand lang)))
@@ -341,17 +347,19 @@
       (. cobj addPostModifier
          cobj-post-modifier )
 
-      (if (:mod cat-sentence-plan) (. verb addModifier (lexicalize (:mod cat-sentence-plan) rand lang)))
+      (if (:mod cat-sentence-plan) (. verb addPostModifier (. nlgFactory createAdverbPhrase (lexicalize (:mod cat-sentence-plan) rand lang))))
       (. clause setObject cobj)
 
       (if (or (= (:verb cat-sentence-plan) :to-increase)
-              (= (:verb cat-sentence-plan) :to-decrease))
+              (= (:verb cat-sentence-plan) :to-decrease)
+              (= (:score cat-sentence-plan) 1))
         (. clause setFeature
            (. Feature MODAL)
            (lexicalize :must rand lang))
         )
 
-      (if (= (:verb cat-sentence-plan) :to-eat)
+      (if (or (= (:score cat-sentence-plan) 5)
+              (= (:score cat-sentence-plan) 0))
         (do
           (. clause setFeature (Feature/TENSE) (Tense/PAST))
           (. clause setFeature (Feature/PERFECT) true)
@@ -386,9 +394,10 @@
 
 (defn quasi-tree-pp-agg
   "Returns a single qt obtained by coordinating the qts over the PP"
-  [quasi-trees language]
+  [quasi-trees score language]
 
   (let  [nlgFactory (nlgFactory-lang language)
+
          q-trees (vec (map #(:qt %) quasi-trees))
          ]
     (do
@@ -397,38 +406,217 @@
 
 
       (def posts (. nlgFactory  createCoordinatedPhrase))
-      (doseq [item (rest q-trees)]
-        (def obj (. item getObject) )
-        (def post-mod (. obj getPostModifiers))
-        (def post-post-mod (. (nth post-mod 0) getPostModifiers))
-        (. posts addCoordinate (nth post-post-mod 0)))
-      (. (nth (. (. clause getObject) getPostModifiers)0) addPostModifier posts)
+      (do
+        (doseq [item (rest q-trees)]
+          (def obj (. item getObject) )
+          (def post-mod (. obj getPostModifiers))
+          (def post-post-mod (. (nth post-mod 0) getPostModifiers))
+          (. posts addCoordinate (nth post-post-mod 0)))
+        (. (nth (. (. clause getObject) getPostModifiers)0) addPostModifier posts)
+        )
+
+
 
       clause  ) )
   )
 
-(defn cat-quasi-trees-generator [cat-sentence-plans rand lang]
+(defn create-vp-aggregation
+  [qt1 qt2 lang]
+  (let  [nlgFactory (nlgFactory-lang lang)
+         ]
+    (do
+      (def clause (. nlgFactory createClause))
+      (. clause setSubject (. qt1 getSubject))
+      (. clause setVerb (. qt1 getVerb))
+
+      (def cobj (. nlgFactory  createCoordinatedPhrase (. qt1 getVerbPhrase)  (. qt2 getVerbPhrase)))
+      (. clause setObject cobj)
+      clause  ) )
+  )
+
+(defn quasi-tree-vp-agg
+  "Create a quasi-tree with a VP coordination between 2 quasi-tree"
+  [qt1 qt2 lang]
+  ;;if qt1 nil return qt2
+  ;;if qt2 nil return qt1
+  ;;if both nil return nil
+  ;; else qt with vp aggregation
+  (cond (and (nil? qt1)
+             (not (nil? qt2))) qt2
+        (and (nil? qt2)
+             (not (nil? qt1))) qt1
+        (and (nil? qt1)
+             (nil? qt2)) nil
+        :else (create-vp-aggregation qt1 qt2 lang))
+  )
+
+(defn cat-quasi-trees-generator [cat-sentence-plans cat-order rand lang]
   (let [cat-quasi-trees (map cat-quasi-tree-generator cat-sentence-plans (repeat (count  cat-sentence-plans) rand) (repeat (count  cat-sentence-plans) lang) )
-        sen-5 (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+
+        ;; we get qt for every possibly category and deviation
+        ;; if not qt -> nil
+        sen-5+ (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                          ))
+                                        (filter (fn [x]
+                                                  (and (= (:score x) 5)
+                                                       (= (:dev x) :+)))
+                                                cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                       ))
+                                                                                                     (filter (fn [x]
+                                                                                                               (and (= (:score x) 5)
+                                                                                                                    (= (:dev x) :+)))
+                                                                                                             cat-quasi-trees) )) 5 lang)
+                    :else nil)
+        sen-5- (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
                                                            ))
                                          (filter (fn [x]
                                                    (and (= (:score x) 5)
-                                                        (= (:dev x) :+)))
-                                                 cat-quasi-trees) )) lang)
-        sen-4 (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                        (= (:dev x) :-)))
+                                                 cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                        ))
+                                                                                                      (filter (fn [x]
+                                                                                                                (and (= (:score x) 5)
+                                                                                                                     (= (:dev x) :-)))
+                                                                                                              cat-quasi-trees) )) 5 lang)
+                     :else nil)
+        sen-4+ (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
                                                            ))
                                          (filter (fn [x]
                                                    (and (= (:score x) 4)
                                                         (= (:dev x) :+)))
-                                                 cat-quasi-trees) )) lang)]
-    ;;aggregate qt for score 5
-    {:5 sen-5
-     :4 sen-4
-     :3 nil
-     :2 nil
-     :1 nil
-     :0 nil
-     }
+                                                 cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                        ))
+                                                                                                      (filter (fn [x]
+                                                                                                                (and (= (:score x) 4)
+                                                                                                                     (= (:dev x) :+)))
+                                                                                                              cat-quasi-trees) )) 4 lang)
+                     :else nil)
+        sen-4- (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                           ))
+                                         (filter (fn [x]
+                                                   (and (= (:score x) 4)
+                                                        (= (:dev x) :-)))
+                                                 cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                        ))
+                                                                                                      (filter (fn [x]
+                                                                                                                (and (= (:score x) 4)
+                                                                                                                     (= (:dev x) :-)))
+                                                                                                              cat-quasi-trees) )) 4 lang)
+                     :else nil)
+        sen-3+ (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                           ))
+                                         (filter (fn [x]
+                                                   (and (= (:score x) 3)
+                                                        (= (:dev x) :+)))
+                                                 cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                        ))
+                                                                                                      (filter (fn [x]
+                                                                                                                (and (= (:score x) 3)
+                                                                                                                     (= (:dev x) :+)))
+                                                                                                              cat-quasi-trees) )) 3 lang)
+                     :else nil)
+        sen-3- (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                           ))
+                                         (filter (fn [x]
+                                                   (and (= (:score x) 3)
+                                                        (= (:dev x) :-)))
+                                                 cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                        ))
+                                                                                                      (filter (fn [x]
+                                                                                                                (and (= (:score x) 3)
+                                                                                                                     (= (:dev x) :-)))
+                                                                                                              cat-quasi-trees) )) 3 lang)
+                     :else nil)
+        sen-2+ (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                           ))
+                                         (filter (fn [x]
+                                                   (and (= (:score x) 2)
+                                                        (= (:dev x) :+)))
+                                                 cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                        ))
+                                                                                                      (filter (fn [x]
+                                                                                                                (and (= (:score x) 2)
+                                                                                                                     (= (:dev x) :+)))
+                                                                                                              cat-quasi-trees) )) 2 lang)
+                     :else nil)
+        sen-2- (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                           ))
+                                         (filter (fn [x]
+                                                   (and (= (:score x) 2)
+                                                        (= (:dev x) :-)))
+                                                 cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                        ))
+                                                                                                      (filter (fn [x]
+                                                                                                                (and (= (:score x) 2)
+                                                                                                                     (= (:dev x) :-)))
+                                                                                                              cat-quasi-trees) )) 2 lang)
+                     :else nil)
+        sen-1+ (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                           ))
+                                         (filter (fn [x]
+                                                   (and (= (:score x) 1)
+                                                        (= (:dev x) :+)))
+                                                 cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                        ))
+                                                                                                      (filter (fn [x]
+                                                                                                                (and (= (:score x) 1)
+                                                                                                                     (= (:dev x) :+)))
+                                                                                                              cat-quasi-trees) )) 1 lang)
+                     :else nil)
+        sen-1- (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                           ))
+                                         (filter (fn [x]
+                                                   (and (= (:score x) 1)
+                                                        (= (:dev x) :-)))
+                                                 cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                        ))
+                                                                                                      (filter (fn [x]
+                                                                                                                (and (= (:score x) 1)
+                                                                                                                     (= (:dev x) :-)))
+                                                                                                              cat-quasi-trees) )) 1 lang)
+                     :else nil)
+        sen-0+ (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                           ))
+                                         (filter (fn [x]
+                                                   (and (= (:score x) 0)
+                                                        (= (:dev x) :+)))
+                                                 cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                        ))
+                                                                                                      (filter (fn [x]
+                                                                                                                (and (= (:score x) 0)
+                                                                                                                     (= (:dev x) :+)))
+                                                                                                              cat-quasi-trees) )) 0 lang)
+                     :else nil)
+        sen-0- (cond (> (count (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                           ))
+                                         (filter (fn [x]
+                                                   (and (= (:score x) 0)
+                                                        (= (:dev x) :-)))
+                                                 cat-quasi-trees) ))) 0) (quasi-tree-pp-agg (vec (map (fn [x] (hash-map :qt (:qt x)
+                                                                                                                        ))
+                                                                                                      (filter (fn [x]
+                                                                                                                (and (= (:score x) 0)
+                                                                                                                     (= (:dev x) :-)))
+                                                                                                              cat-quasi-trees) )) 0 lang)
+                     :else nil)
+
+
+        ]
+    (cond (= cat-order :desc) {:5 (quasi-tree-vp-agg sen-5+ sen-5- lang)
+                               :4 (quasi-tree-vp-agg sen-4+ sen-4- lang)
+                               :3 (quasi-tree-vp-agg sen-3+ sen-3- lang)
+                               :2 (quasi-tree-vp-agg sen-2+ sen-2- lang)
+                               :1 (quasi-tree-vp-agg sen-1+ sen-1- lang)
+                               :0 (quasi-tree-vp-agg sen-0+ sen-0- lang)
+                               }
+          :else {:5 (quasi-tree-vp-agg sen-5+ sen-5- lang)
+                 :0 (quasi-tree-vp-agg sen-0+ sen-0- lang)
+                 :4 (quasi-tree-vp-agg sen-4+ sen-4- lang)
+                 :1 (quasi-tree-vp-agg sen-1+ sen-1- lang)
+                 :3 (quasi-tree-vp-agg sen-3+ sen-3- lang)
+                 :2 (quasi-tree-vp-agg sen-2+ sen-2- lang)
+                 })
+
     )
 
   )
@@ -465,12 +653,26 @@
         ]
 
 
-    (def cat-quasi-tree (cat-quasi-trees-generator (cat-sentence-planner (cat-text-planner cat-dict)) rand lang))
+    (def cat-quasi-tree (cat-quasi-trees-generator (cat-sentence-planner cat-dict) (compute-cat-order cat-dict)rand lang))
     (str (. realiser realiseSentence (ms-quasi-tree-generator (ms-sentence-planner (ms-text-planner mscore)) rand lang))
-         " "
-         (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 0))
-         (if (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 1))
-           (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 1)))
+         "\n"
+         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 0)))
+           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 0)) "\n"))
+
+         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 1)))
+           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 1)) "\n"))
+
+         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 2)))
+           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 2)) "\n"))
+
+         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 3)))
+           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 3)) "\n"))
+
+         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 4)))
+           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 4)) "\n"))
+
+         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 5)))
+           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 5)) "\n"))
 
          )
 
