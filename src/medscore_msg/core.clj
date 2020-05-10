@@ -347,7 +347,7 @@
       (. cobj addPostModifier
          cobj-post-modifier )
 
-      (if (:mod cat-sentence-plan) (. verb addPostModifier (. nlgFactory createAdverbPhrase (lexicalize (:mod cat-sentence-plan) rand lang))))
+      (if (:mod cat-sentence-plan) (. verb addModifier (lexicalize (:mod cat-sentence-plan) rand lang)))
       (. clause setObject cobj)
 
       (if (or (= (:verb cat-sentence-plan) :to-increase)
@@ -401,19 +401,43 @@
          q-trees (vec (map #(:qt %) quasi-trees))
          ]
     (do
-      (def clause (nth q-trees 0))
-      (def post-mod )
 
-
+      (def clause (. nlgFactory createClause))
+      (def verb (. nlgFactory createVerbPhrase (. (nth q-trees 0) getVerb)))
+      (. clause setVerb verb)
+      (. clause setSubject (. (nth q-trees 0) getSubject))
+      (def cobj (. nlgFactory createNounPhrase (determiner :def language)(. (. (nth q-trees 0) getObject) getHead)))
+      (def post-mod (. nlgFactory createPrepositionPhrase  (lexicalize :of :no-random language) (. (nth (. (. (nth q-trees 0) getObject) getPostModifiers) 0) getObject)))
+      (. cobj addPostModifier post-mod )
       (def posts (. nlgFactory  createCoordinatedPhrase))
       (do
-        (doseq [item (rest q-trees)]
-          (def obj (. item getObject) )
-          (def post-mod (. obj getPostModifiers))
-          (def post-post-mod (. (nth post-mod 0) getPostModifiers))
-          (. posts addCoordinate (nth post-post-mod 0)))
-        (. (nth (. (. clause getObject) getPostModifiers)0) addPostModifier posts)
+        (doseq [item q-trees]
+          (. posts addCoordinate (. (nth (. (nth (. (. item getObject) getPostModifiers) 0) getPostModifiers) 0) getObject)
+             ))
+        (. post-mod addPostModifier   (. nlgFactory createPrepositionPhrase  (lexicalize :of :no-random language) posts))
         )
+
+
+      (. clause setObject cobj)
+
+      (cond (or (= score 5)
+                (= score 0))
+            (do
+              (. cobj addPreModifier (. nlgFactory createAdjectivePhrase
+                                        ;;createNounPhrase
+                                        (lexicalize :right rand language)))
+              (. clause setFeature (Feature/TENSE) (Tense/PAST))
+              (. clause setFeature (Feature/PERFECT) true)
+              (. clause setFeature (Feature/PROGRESSIVE) false)
+              )
+            :else (. clause setFeature
+                     (. Feature MODAL)
+                     (lexicalize :must rand language))
+            )
+      (cond (= score 4) (. verb addModifier (lexicalize :lightly rand language))
+            (= score 2) (. verb addModifier (lexicalize :greatly rand language)))
+
+
 
 
 
@@ -425,12 +449,8 @@
   (let  [nlgFactory (nlgFactory-lang lang)
          ]
     (do
-      (def clause (. nlgFactory createClause))
-      (. clause setSubject (. qt1 getSubject))
-      (. clause setVerb (. qt1 getVerb))
 
-      (def cobj (. nlgFactory  createCoordinatedPhrase (. qt1 getVerbPhrase)  (. qt2 getVerbPhrase)))
-      (. clause setObject cobj)
+      (def clause (. nlgFactory  createCoordinatedPhrase qt1 qt2))
       clause  ) )
   )
 
@@ -654,6 +674,8 @@
 
 
     (def cat-quasi-tree (cat-quasi-trees-generator (cat-sentence-planner cat-dict) (compute-cat-order cat-dict)rand lang))
+
+
     (str (. realiser realiseSentence (ms-quasi-tree-generator (ms-sentence-planner (ms-text-planner mscore)) rand lang))
          "\n"
          (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 0)))
