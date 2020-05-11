@@ -89,6 +89,7 @@
          :right ["giusto","corretto"]
          :more ["più"]
          :less ["meno"]
+         :but ["ma", "tuttavia"]
          }
         english-standard-dictionary
         {
@@ -133,7 +134,7 @@
          :right ["right"]
          :more ["more"]
          :less ["less"]
-
+         :but ["but"]
 
          }]
     (cond (= lang :ita)
@@ -170,10 +171,10 @@
 (defn compute-cat-order
   "If not present 5 or 4 or 3 -> order desc"
   [cat-dict]
-  (cond (and (some #{:5} cat-dict)
-             (some #{:4} cat-dict)
-             (some #{:3} cat-dict)) :desc
-        :else :sandw
+  (cond (and (not (nil?(some #{5} cat-dict)))
+             (not (nil?(some #{4} cat-dict)))
+             (not (nil?(some #{3} cat-dict)))) :sandw
+        :else :desc
         )
   )
 
@@ -523,12 +524,14 @@
   )
 
 (defn create-vp-aggregation
-  [qt1 qt2 lang]
+  [qt1 qt2 conjunction lang]
   (let  [nlgFactory (nlgFactory-lang lang)
          ]
     (do
 
       (def clause (. nlgFactory  createCoordinatedPhrase qt1 qt2))
+      (cond (= conjunction :but)
+            (. clause setConjunction (lexicalize :but :random lang)))
       clause  ) )
   )
 
@@ -545,7 +548,7 @@
              (not (nil? qt1))) qt1
         (and (nil? qt1)
              (nil? qt2)) nil
-        :else (create-vp-aggregation qt1 qt2 lang))
+        :else (create-vp-aggregation qt1 qt2 :and lang))
   )
 
 (defn cat-quasi-trees-generator [cat-sentence-plans cat-order rand lang]
@@ -725,22 +728,38 @@
     sent)
   )
 
+(defn realise-agg-sentence [qt1 qt2 lang aggregation]
+  (cond (and (nil? qt1)
+             (not (nil? qt2))) (realise-sentence qt2)
+        (and (nil? qt2)
+             (not (nil? qt1))) (realise-sentence qt1)
+        (and (nil? qt1)
+             (nil? qt2)) ""
+        :else (do
+                (def conj (cond (= aggregation :desc):and
+                                :else :but
+                                ))
+                (def clause (create-vp-aggregation qt1 qt2 conj lang ))
+                (realise-sentence clause))
+        )
+  )
+
 (defn createFeedbackMedMessages
   "This is the function called by the server in order to return the text
   message to the user. It assumes as input the score of the 9 food categories
   and the value for randomness and language
   Workaround: 11 integers "
-  [cer pot fru veg leg fish rmeat poul ffdp mscore rand-comp ita-eng]
+  [cere pot fru veg leg fish rmeat poul ffdp mscore rand-comp ita-eng]
   ;;create a dict of categories {score name type}
-  (let [cat-dict {:cer {:score cer :cat :cer :dev :+}
-                  :pot {:score pot :cat :pot :dev :+}
-                  :fru {:score fru :cat :fru :dev :+}
-                  :veg {:score veg :cat :veg :dev :+}
-                  :leg {:score leg :cat :leg :dev :+}
-                  :fish {:score fish :cat :fish :dev :+}
-                  :rmeat {:score rmeat :cat :rmeat :dev :-}
-                  :poul {:score poul :cat :poul :dev :-}
-                  :ffdp {:score ffdp :cat :ffdp :dev :-}
+  (let [cat-dict {:cer {:score cere, :cat :cer, :dev :+},
+                  :pot {:score pot, :cat :pot, :dev :+},
+                  :fru {:score fru, :cat :fru, :dev :+},
+                  :veg {:score veg, :cat :veg, :dev :+},
+                  :leg {:score leg, :cat :leg, :dev :+},
+                  :fish {:score fish, :cat :fish, :dev :+},
+                  :rmeat {:score rmeat, :cat :rmeat, :dev :-},
+                  :poul {:score poul, :cat :poul, :dev :-},
+                  :ffdp {:score ffdp, :cat :ffdp, :dev :-}
                   }
         ;;select randomness from input
         rand (cond (= rand-comp 0) :no-random
@@ -749,34 +768,17 @@
         lang (cond (= ita-eng 0) :ita
                    (= ita-eng 1) :eng)
         ]
-
-
-    (def cat-quasi-tree (cat-quasi-trees-generator (cat-sentence-planner cat-dict) (compute-cat-order cat-dict)rand lang))
+    (def cat-order (compute-cat-order (vec [cere pot fru veg leg fish rmeat poul ffdp])))
+    (def cat-quasi-tree (cat-quasi-trees-generator (cat-sentence-planner cat-dict) cat-order rand lang))
 
 
     (str (. realiser realiseSentence (ms-quasi-tree-generator (ms-sentence-planner (ms-text-planner mscore)) rand lang))
          "\n"
-
-         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 0)))
-           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 0))
-                ))
-
-         
-
-         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 1)))
-           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 1)) "\n"))
-
-         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 2)))
-           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 2)) "\n"))
-
-         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 3)))
-           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 3)) "\n"))
-
-         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 4)))
-           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 4)) "\n"))
-
-         (if (not (nil? (nth (vec (map #(second %) cat-quasi-tree)) 5)))
-           (str (realise-sentence (nth (vec (map #(second %) cat-quasi-tree)) 5)) "\n"))
+         (realise-agg-sentence (nth (vec (map #(second %) cat-quasi-tree)) 0) (nth (vec (map #(second %) cat-quasi-tree)) 1) lang cat-order)
+         "\n"
+         (realise-agg-sentence (nth (vec (map #(second %) cat-quasi-tree)) 2) (nth (vec (map #(second %) cat-quasi-tree)) 3) lang cat-order)
+         "\n"
+         (realise-agg-sentence (nth (vec (map #(second %) cat-quasi-tree)) 4) (nth (vec (map #(second %) cat-quasi-tree)) 5) lang cat-order)
 
          )
 
